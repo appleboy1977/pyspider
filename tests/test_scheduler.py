@@ -14,6 +14,7 @@ import logging.config
 logging.config.fileConfig("pyspider/logging.conf")
 
 from pyspider.scheduler.task_queue import TaskQueue
+from pyspider.libs import utils
 
 
 class TestTaskQueue(unittest.TestCase):
@@ -141,7 +142,7 @@ class TestScheduler(unittest.TestCase):
             scheduler.DELETE_TIME = 0
             scheduler.DEFAULT_RETRY_DELAY = {'': 5}
             scheduler._last_tick = int(time.time())  # not dispatch cronjob
-            run_in_thread(scheduler.xmlrpc_run, port=self.scheduler_xmlrpc_port)
+            self.xmlrpc_thread = run_in_thread(scheduler.xmlrpc_run, port=self.scheduler_xmlrpc_port)
             scheduler.run()
 
         self.process = run_in_thread(run_scheduler)
@@ -152,9 +153,15 @@ class TestScheduler(unittest.TestCase):
         if self.process.is_alive():
             self.rpc._quit()
             self.process.join(5)
+        self.xmlrpc_thread.join()
         assert not self.process.is_alive()
         shutil.rmtree('./data/tests', ignore_errors=True)
         time.sleep(1)
+
+        assert not utils.check_port_open(5000)
+        assert not utils.check_port_open(self.scheduler_xmlrpc_port)
+        assert not utils.check_port_open(24444)
+        assert not utils.check_port_open(25555)
 
     def test_10_new_task_ignore(self):
         self.newtask_queue.put({
@@ -235,7 +242,7 @@ class TestScheduler(unittest.TestCase):
             'project': 'test_project',
             'url': 'url_force_update',
             'schedule': {
-                'age': 0,
+                'age': 10,
                 'force_update': True,
             },
         })
@@ -396,9 +403,6 @@ class TestScheduler(unittest.TestCase):
                 },
             }
         })
-        from six.moves import queue as Queue
-        with self.assertRaises(Queue.Empty):
-            task = self.scheduler2fetcher.get(timeout=4)
         task = self.scheduler2fetcher.get(timeout=5)
         self.assertIsNotNone(task)
 
@@ -567,6 +571,7 @@ class TestScheduler(unittest.TestCase):
         self.assertIsNone(self.projectdb.get('test_inqueue_project'))
         self.taskdb._list_project()
         self.assertIsNone(self.taskdb.get_task('test_inqueue_project', 'taskid1'))
+        self.assertNotIn('test_inqueue_project', self.rpc.counter('5m', 'sum'))
 
     def test_z10_startup(self):
         self.assertTrue(self.process.is_alive())
